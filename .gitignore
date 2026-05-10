@@ -1,0 +1,31 @@
+# Generated CSVs
+smart_news_raw.csv
+smart_news_summarised.csv
+smart_news_live.csv
+model_comparison.csv
+ausflash_feed.csv
+*.csv
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+env/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model cache (large, downloaded on demand)
+models/
+*.bin
+*.safetensors
+
+# Zip bundles
+*.zip
