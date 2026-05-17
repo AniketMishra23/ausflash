@@ -3,6 +3,8 @@ apify-client
 pandas
 scikit-learn
 python-dateutil
+sumy
+nltk
 
 # Shared
 supabase

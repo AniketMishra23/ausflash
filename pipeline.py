@@ -8,8 +8,8 @@ Steps:
   3. 48-hour date filter
   4. Exact title deduplication
   5. TF-IDF similarity deduplication
-  6. Section classification
-  7. Quick 60-word summary (no ML model — uses description truncation for speed)
+  6. Section classification (scoring-based — most keyword matches wins)
+  7. Extractive summarisation via sumy (open-source, no model download)
   8. Upsert to Supabase (skips URLs already in DB)
 
 Environment variables required (set as GitHub Actions secrets):
@@ -27,6 +27,9 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from supabase import create_client
+import nltk
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
 
 # ═══════════════════════════════════════════════════════
 # CONFIG
@@ -64,72 +67,99 @@ SOURCES = [
 # SECTION CLASSIFIER
 # ═══════════════════════════════════════════════════════
 SECTION_KEYWORDS = {
+    # Specific phrases only — avoids false positives from single common words
+    'Crime': [
+        'murder', 'homicide', 'manslaughter', 'serial killer',
+        'arrested for', 'charged with', 'pleaded guilty', 'not guilty',
+        'prison sentence', 'jail sentence', 'life sentence', 'death sentence',
+        'convicted of', 'criminal charges', 'criminal trial', 'criminal case',
+        'shooting', 'stabbing', 'robbery', 'burglary', 'carjacking',
+        'drug bust', 'drug trafficking', 'human trafficking',
+        'terrorist attack', 'bomb threat', 'hostage', 'kidnapping',
+        'domestic violence', 'sexual assault', 'rape',
+        'fraud charges', 'money laundering', 'bribery charges',
+        'gang violence', 'cartel', 'indicted', 'extradited',
+        'wanted by police', 'fugitive', 'crime scene',
+    ],
     'Tech': [
-        'ai', 'artificial intelligence', 'machine learning', 'software', 'app',
+        'artificial intelligence', 'machine learning', 'software',
         'startup', 'google', 'apple', 'microsoft', 'meta', 'openai', 'nvidia',
-        'chip', 'cybersecurity', 'hack', 'data breach', 'electric vehicle', 'ev',
-        'tesla', 'smartphone', 'iphone', 'android', 'tech', 'technology',
-        'developer', 'chatgpt', 'llm', 'drone', '5g', 'quantum', 'computer',
+        'chip', 'semiconductor', 'cybersecurity', 'data breach', 'hack',
+        'electric vehicle', 'tesla', 'spacex', 'smartphone', 'iphone', 'android',
+        'chatgpt', 'llm', 'generative ai', '5g', 'quantum computing',
+        'tech company', 'silicon valley', 'app store', 'cloud computing',
+        'robotics', 'autonomous vehicle', 'deepmind', 'anthropic',
     ],
     'Politics': [
         'election', 'president', 'prime minister', 'parliament', 'congress',
-        'senate', 'government', 'policy', 'democrat', 'republican', 'labour',
-        'trump', 'biden', 'vote', 'ballot', 'legislation', 'minister',
-        'cabinet', 'diplomat', 'sanctions', 'nato', 'united nations',
-        'political', 'politician', 'campaign', 'opposition', 'albanese',
+        'senate', 'government policy', 'democrat', 'republican', 'labour party',
+        'trump', 'biden', 'vote', 'ballot', 'referendum', 'legislation',
+        'cabinet minister', 'diplomat', 'sanctions', 'nato', 'united nations',
+        'political party', 'politician', 'campaign', 'albanese', 'dutton',
+        'white house', 'supreme court ruling', 'executive order',
     ],
     'Business': [
-        'stock', 'market', 'shares', 'economy', 'inflation', 'interest rate',
-        'gdp', 'recession', 'investment', 'revenue', 'profit', 'earnings',
-        'merger', 'bankruptcy', 'layoff', 'unemployment', 'trade', 'tariff',
-        'finance', 'bank', 'crypto', 'bitcoin', 'wall street', 'asx', 'nasdaq',
-    ],
-    'Crime': [
-        'murder', 'killed', 'arrested', 'charged', 'sentenced', 'prison',
-        'jail', 'court', 'trial', 'verdict', 'police', 'shooting', 'stabbing',
-        'robbery', 'fraud', 'scam', 'trafficking', 'terrorist', 'bomb',
-        'hostage', 'kidnap', 'homicide', 'assault', 'corruption',
+        'stock market', 'shares', 'economy', 'inflation', 'interest rate',
+        'federal reserve', 'reserve bank', 'gdp', 'recession', 'investment',
+        'quarterly earnings', 'revenue', 'profit', 'merger', 'acquisition',
+        'ipo', 'bankruptcy', 'layoffs', 'unemployment rate', 'trade war',
+        'tariff', 'wall street', 'asx', 'nasdaq', 'crypto', 'bitcoin',
+        'hedge fund', 'venture capital', 'real estate market',
     ],
     'Science': [
-        'research', 'study', 'scientists', 'discovery', 'space', 'nasa',
-        'climate change', 'environment', 'species', 'gene', 'dna', 'vaccine',
-        'virus', 'bacteria', 'cancer', 'pandemic', 'outbreak', 'disease',
-        'astronomy', 'planet', 'telescope', 'reef', 'earthquake', 'volcano',
+        'scientists', 'researchers found', 'new study', 'discovery',
+        'nasa', 'space mission', 'climate change', 'carbon emissions',
+        'species', 'fossil', 'genome', 'dna', 'vaccine', 'clinical trial',
+        'virus outbreak', 'bacteria', 'cancer treatment', 'pandemic',
+        'astronomy', 'black hole', 'telescope', 'coral reef',
+        'earthquake', 'volcanic eruption', 'ocean temperature',
     ],
     'Sport': [
-        'match', 'tournament', 'championship', 'league', 'cup', 'final',
-        'score', 'goal', 'player', 'coach', 'transfer', 'football', 'soccer',
-        'rugby', 'cricket', 'tennis', 'golf', 'basketball', 'nba', 'nfl',
-        'nrl', 'afl', 'f1', 'formula 1', 'olympics', 'athlete', 'motogp',
+        'match', 'tournament', 'championship', 'league', 'cup final',
+        'score', 'goal', 'transfer fee', 'football', 'soccer', 'rugby',
+        'cricket', 'tennis', 'golf', 'basketball', 'nba', 'nfl',
+        'nrl', 'afl', 'formula 1', 'f1 race', 'olympics', 'athlete',
+        'wimbledon', 'world cup', 'grand slam', 'motogp', 'ufc',
     ],
     'Entertainment': [
-        'movie', 'film', 'box office', 'oscar', 'bafta', 'emmy', 'grammy',
-        'celebrity', 'actor', 'actress', 'album', 'concert', 'streaming',
-        'netflix', 'disney', 'hbo', 'tv show', 'series', 'award',
-        'singer', 'band', 'music', 'pop', 'hip hop', 'viral', 'tiktok',
+        'box office', 'oscar', 'bafta', 'emmy', 'grammy', 'cannes',
+        'celebrity', 'actor', 'actress', 'album release', 'concert tour',
+        'netflix', 'disney+', 'hbo', 'tv series', 'film review',
+        'music video', 'pop star', 'hip hop', 'red carpet', 'movie trailer',
+        'box office', 'streaming service', 'tiktok trend',
     ],
     'Lifestyle': [
-        'food', 'recipe', 'restaurant', 'travel', 'holiday', 'vacation',
-        'wellness', 'mental health', 'fitness', 'workout', 'diet', 'parenting',
-        'relationship', 'dating', 'wedding', 'home', 'fashion', 'beauty',
-        'skincare', 'shopping', 'review', 'how to', 'tips', 'advice',
+        'recipe', 'restaurant review', 'travel guide', 'vacation',
+        'mental health', 'fitness routine', 'workout', 'diet plan',
+        'parenting', 'relationship advice', 'wedding', 'interior design',
+        'fashion week', 'skincare', 'wellness', 'meditation',
     ],
     'World': [
-        'war', 'conflict', 'military', 'troops', 'attack', 'strike', 'missile',
-        'ceasefire', 'humanitarian', 'refugee', 'ukraine', 'russia', 'israel',
-        'gaza', 'iran', 'china', 'north korea', 'middle east', 'africa',
-        'europe', 'asia', 'flood', 'disaster', 'protest', 'coup',
+        'war', 'conflict', 'military', 'troops', 'airstrike', 'missile',
+        'ceasefire', 'humanitarian crisis', 'refugee', 'ukraine', 'russia',
+        'israel', 'gaza', 'iran', 'north korea', 'middle east',
+        'flood', 'natural disaster', 'protest', 'coup', 'revolution',
+        'foreign minister', 'bilateral talks', 'un peacekeepers',
     ],
 }
-SECTION_PRIORITY = [
-    'Crime', 'Tech', 'Politics', 'Business', 'Science',
-    'Sport', 'Entertainment', 'Lifestyle', 'World',
-]
 
+# Scoring-based classifier — section with most keyword matches wins.
+# World is the fallback when nothing else matches.
 def classify_section(title, description):
-    text = (title + ' ' + description).lower()
-    for section in SECTION_PRIORITY:
-        if any(kw in text for kw in SECTION_KEYWORDS[section]):
+    text   = (title + ' ' + description).lower()
+    scores = {
+        section: sum(1 for kw in kws if kw in text)
+        for section, kws in SECTION_KEYWORDS.items()
+        if section != 'World'
+    }
+    best_score = max(scores.values(), default=0)
+    if best_score == 0:
+        return 'World'
+    # Among sections tied for best score, pick by priority order
+    priority = ['Crime', 'Tech', 'Politics', 'Business', 'Science',
+                'Sport', 'Entertainment', 'Lifestyle']
+    for section in priority:
+        if scores.get(section, 0) == best_score:
             return section
     return 'World'
 
@@ -189,17 +219,47 @@ def deduplicate_by_similarity(df, threshold=0.70):
 
 
 # ═══════════════════════════════════════════════════════
-# QUICK SUMMARY (60-word truncation — no ML model)
-# Fast enough for GitHub Actions. Swap for BART if you
-# run this locally with GPU.
+# SUMMARISATION — sumy (open-source, no model download)
+# Uses Luhn extractive algorithm to pick the most
+# informative sentences from the description.
+# Falls back to sentence-aware truncation if sumy fails.
 # ═══════════════════════════════════════════════════════
-def quick_summary(description):
-    if not description or len(description.strip()) < 20:
-        return 'Summary not available.'
-    words = description.strip().split()
+try:
+    from sumy.parsers.plaintext import PlaintextParser
+    from sumy.nlp.tokenizers import Tokenizer
+    from sumy.summarizers.luhn import LuhnSummarizer
+    _sumy_ready = True
+except ImportError:
+    _sumy_ready = False
+
+def summarise(title, description):
+    text = (description or '').strip()
+    if not text or len(text) < 30:
+        return text or 'Summary not available.'
+
+    # sumy extractive summarisation
+    if _sumy_ready:
+        try:
+            combined = f'{title}. {text}'
+            parser   = PlaintextParser.from_string(combined, Tokenizer('english'))
+            summary  = LuhnSummarizer()(parser.document, sentences_count=2)
+            result   = ' '.join(str(s) for s in summary).strip()
+            if result:
+                words = result.split()
+                return ' '.join(words[:60]) + ('...' if len(words) > 60 else '')
+        except Exception:
+            pass
+
+    # Fallback: sentence-aware truncation
+    words = text.split()
     if len(words) <= 60:
-        return description.strip()
-    return ' '.join(words[:60]) + '...'
+        return text
+    chunk = ' '.join(words[:60])
+    for punct in ('. ', '! ', '? '):
+        idx = chunk.rfind(punct)
+        if idx > 20:
+            return chunk[:idx + 1]
+    return chunk + '...'
 
 
 # ═══════════════════════════════════════════════════════
@@ -277,7 +337,7 @@ def main():
 
     # ── Section classification ────────────────────────────
     df['section']    = df.apply(lambda r: classify_section(r['title'], r['description']), axis=1)
-    df['ai_summary'] = df['description'].apply(quick_summary)
+    df['ai_summary'] = df.apply(lambda r: summarise(r['title'], r['description']), axis=1)
 
     print(f'\nSection distribution:')
     print(df['section'].value_counts().to_string())
