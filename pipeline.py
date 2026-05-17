@@ -46,15 +46,19 @@ SIMILARITY_THRESHOLD = 0.70  # cosine similarity above this → near-duplicate, 
 MAX_ARTICLES         = 100   # max articles to request from the Apify actor per run
 
 # ── Australian RSS feeds (scraped directly via feedparser) ─
+# news.com.au, Sky News AU, Herald Sun returned 0 entries — likely blocking
+# feedparser's default user-agent or their feed URLs changed.
+# Replaced with The Age, Brisbane Times, and WA Today (same Nine/Fairfax
+# network as SMH — reliable open RSS feeds).
 AUSTRALIAN_RSS_FEEDS = {
     'ABC News Australia':       'https://www.abc.net.au/news/feed/51120/rss.xml',
     'SBS News':                 'https://www.sbs.com.au/news/topic/latest/feed',
     'The Guardian Australia':   'https://www.theguardian.com/australia-news/rss',
     '9News Australia':          'https://www.9news.com.au/rss',
-    'news.com.au':              'https://www.news.com.au/feed/',
-    'Sky News Australia':       'https://feeds.skynews.com.au/feeds/rss/australia.xml',
     'The Sydney Morning Herald':'https://www.smh.com.au/rss/feed.xml',
-    'Herald Sun':               'https://www.heraldsun.com.au/news/breaking-news/rss',
+    'The Age':                  'https://www.theage.com.au/rss/feed.xml',
+    'Brisbane Times':           'https://www.brisbanetimes.com.au/rss/feed.xml',
+    'WA Today':                 'https://www.watoday.com.au/rss/feed.xml',
 }
 
 SOURCES = [
@@ -81,8 +85,10 @@ SOURCES = [
 # SECTION CLASSIFIER
 # ═══════════════════════════════════════════════════════
 SECTION_KEYWORDS = {
-    # Specific phrases only — avoids false positives from single common words
+    # Specific phrases only — avoids false positives from single common words.
+    # AU-specific terms are marked with # AU so they're easy to maintain.
     'Crime': [
+        # Global crime
         'murder', 'homicide', 'manslaughter', 'serial killer',
         'arrested for', 'charged with', 'pleaded guilty', 'not guilty',
         'prison sentence', 'jail sentence', 'life sentence', 'death sentence',
@@ -94,8 +100,13 @@ SECTION_KEYWORDS = {
         'fraud charges', 'money laundering', 'bribery charges',
         'gang violence', 'cartel', 'indicted', 'extradited',
         'wanted by police', 'fugitive', 'crime scene',
+        # AU
+        'nsw police', 'victoria police', 'queensland police', 'afp',
+        'australian federal police', 'court heard', 'magistrate',
+        'supreme court', 'inquest', 'coronial', 'bail refused',
     ],
     'Tech': [
+        # Global tech
         'artificial intelligence', 'machine learning', 'software',
         'startup', 'google', 'apple', 'microsoft', 'meta', 'openai', 'nvidia',
         'chip', 'semiconductor', 'cybersecurity', 'data breach', 'hack',
@@ -103,50 +114,89 @@ SECTION_KEYWORDS = {
         'chatgpt', 'llm', 'generative ai', '5g', 'quantum computing',
         'tech company', 'silicon valley', 'app store', 'cloud computing',
         'robotics', 'autonomous vehicle', 'deepmind', 'anthropic',
+        # AU
+        'asx tech', 'canva', 'atlassian', 'afterpay', 'fintech',
+        'nbn', 'myhealth', 'digital id',
     ],
     'Politics': [
+        # Global politics
         'election', 'president', 'prime minister', 'parliament', 'congress',
         'senate', 'government policy', 'democrat', 'republican', 'labour party',
         'trump', 'biden', 'vote', 'ballot', 'referendum', 'legislation',
         'cabinet minister', 'diplomat', 'sanctions', 'nato', 'united nations',
-        'political party', 'politician', 'campaign', 'albanese', 'dutton',
+        'political party', 'politician', 'campaign',
         'white house', 'supreme court ruling', 'executive order',
+        # AU — parties, leaders, institutions
+        'albanese', 'dutton', 'greens party', 'anthony albanese',
+        'peter dutton', 'liberal party', 'labor party', 'the nationals',
+        'federal budget', 'federal government', 'state government',
+        'premier', 'treasurer', 'shadow minister', 'crossbench',
+        'house of representatives', 'australian senate', 'aec',
+        'voice to parliament', 'aukus', 'asio', 'home affairs',
     ],
     'Business': [
+        # Global business
         'stock market', 'shares', 'economy', 'inflation', 'interest rate',
-        'federal reserve', 'reserve bank', 'gdp', 'recession', 'investment',
+        'federal reserve', 'gdp', 'recession', 'investment',
         'quarterly earnings', 'revenue', 'profit', 'merger', 'acquisition',
         'ipo', 'bankruptcy', 'layoffs', 'unemployment rate', 'trade war',
-        'tariff', 'wall street', 'asx', 'nasdaq', 'crypto', 'bitcoin',
+        'tariff', 'wall street', 'nasdaq', 'crypto', 'bitcoin',
         'hedge fund', 'venture capital', 'real estate market',
+        # AU
+        'reserve bank', 'rba', 'asx', 'asx 200', 'australian dollar', 'aud',
+        'cost of living', 'housing affordability', 'mortgage rate',
+        'superannuation', 'cba', 'anz', 'westpac', 'nab',
+        'woolworths', 'coles', 'qantas', 'bhp', 'rio tinto',
     ],
     'Science': [
+        # Global science
         'scientists', 'researchers found', 'new study', 'discovery',
         'nasa', 'space mission', 'climate change', 'carbon emissions',
         'species', 'fossil', 'genome', 'dna', 'vaccine', 'clinical trial',
         'virus outbreak', 'bacteria', 'cancer treatment', 'pandemic',
-        'astronomy', 'black hole', 'telescope', 'coral reef',
+        'astronomy', 'black hole', 'telescope',
         'earthquake', 'volcanic eruption', 'ocean temperature',
+        # AU
+        'great barrier reef', 'coral bleaching', 'csiro',
+        'australian museum', 'bushfire research', 'murray-darling',
+        'marine protected', 'endangered species australia',
     ],
     'Sport': [
-        'match', 'tournament', 'championship', 'league', 'cup final',
-        'score', 'goal', 'transfer fee', 'football', 'soccer', 'rugby',
-        'cricket', 'tennis', 'golf', 'basketball', 'nba', 'nfl',
-        'nrl', 'afl', 'formula 1', 'f1 race', 'olympics', 'athlete',
-        'wimbledon', 'world cup', 'grand slam', 'motogp', 'ufc',
+        # Global sport
+        'tournament', 'championship', 'cup final',
+        'transfer fee', 'football', 'soccer', 'rugby',
+        'tennis', 'golf', 'basketball', 'nba', 'nfl',
+        'formula 1', 'f1 race', 'olympics', 'athlete',
+        'wimbledon', 'grand slam', 'motogp', 'ufc',
+        # AU — codes, leagues, events
+        'nrl', 'afl', 'cricket australia', 'a-league', 'super rugby',
+        'state of origin', 'grand final', 'test match', 'ashes',
+        'australian open', 'commonwealth games', 'socceroos', 'wallabies',
+        'kangaroos', 'matildas', 'boomers', 'opals',
+        'premiership', 'finals series', 'wooden spoon',
+        # Common sport reporting phrases
+        'match', 'league', 'score', 'goal',
     ],
     'Entertainment': [
+        # Global entertainment
         'box office', 'oscar', 'bafta', 'emmy', 'grammy', 'cannes',
         'celebrity', 'actor', 'actress', 'album release', 'concert tour',
         'netflix', 'disney+', 'hbo', 'tv series', 'film review',
         'music video', 'pop star', 'hip hop', 'red carpet', 'movie trailer',
-        'box office', 'streaming service', 'tiktok trend',
+        'streaming service', 'tiktok trend',
+        # AU
+        'aria awards', 'aacta', 'australian idol', 'masterchef australia',
+        'the block', 'neighbours', 'home and away', 'australian film',
     ],
     'Lifestyle': [
+        # Global lifestyle
         'recipe', 'restaurant review', 'travel guide', 'vacation',
         'mental health', 'fitness routine', 'workout', 'diet plan',
         'parenting', 'relationship advice', 'wedding', 'interior design',
         'fashion week', 'skincare', 'wellness', 'meditation',
+        # AU
+        'public holiday', 'school holidays', 'australian travel',
+        'cost of living tips', 'renters', 'first home buyer',
     ],
     'World': [
         'war', 'conflict', 'military', 'troops', 'airstrike', 'missile',
@@ -213,6 +263,13 @@ def scrape_australian_rss(seen_urls, scrape_time):
     except ImportError:
         print('feedparser not installed — skipping Australian RSS sources.')
         return []
+
+    # Spoof a browser user-agent — some AU news sites block Python's default UA
+    feedparser.USER_AGENT = (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/124.0.0.0 Safari/537.36'
+    )
 
     rows = []
     for source_name, feed_url in AUSTRALIAN_RSS_FEEDS.items():
