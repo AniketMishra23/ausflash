@@ -33,3 +33,12 @@ models/
 
 # Zip bundles
 *.zip
+
+# Node / Expo app
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Claude memory (local only)
+.claude/
