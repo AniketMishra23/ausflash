@@ -55,10 +55,12 @@ AUSTRALIAN_RSS_FEEDS = {
     'SBS News':                 'https://www.sbs.com.au/news/topic/latest/feed',
     'The Guardian Australia':   'https://www.theguardian.com/australia-news/rss',
     '9News Australia':          'https://www.9news.com.au/rss',
-    'The Sydney Morning Herald':'https://www.smh.com.au/rss/feed.xml',
-    'The Age':                  'https://www.theage.com.au/rss/feed.xml',
-    'Brisbane Times':           'https://www.brisbanetimes.com.au/rss/feed.xml',
-    'WA Today':                 'https://www.watoday.com.au/rss/feed.xml',
+    'The Sydney Morning Herald': 'https://www.smh.com.au/rss/feed.xml',
+    # Replacing The Age / Brisbane Times / WA Today — same Fairfax network as SMH,
+    # identical articles cause ~40 wasted dedup slots each run.
+    'Australian Financial Review': 'https://www.afr.com/rss',
+    'Crikey':                    'https://www.crikey.com.au/feed/',
+    'The New Daily':             'https://thenewdaily.com.au/feed/',
 }
 
 SOURCES = [
