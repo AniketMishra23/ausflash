@@ -43,6 +43,18 @@ MAX_AGE_HOURS       = 48
 SIMILARITY_THRESHOLD = 0.70
 MAX_ARTICLES        = 100
 
+# ── Australian RSS feeds (scraped directly via feedparser) ─
+AUSTRALIAN_RSS_FEEDS = {
+    'ABC News Australia':       'https://www.abc.net.au/news/feed/51120/rss.xml',
+    'SBS News':                 'https://www.sbs.com.au/news/topic/latest/feed',
+    'The Guardian Australia':   'https://www.theguardian.com/australia-news/rss',
+    '9News Australia':          'https://www.9news.com.au/rss',
+    'news.com.au':              'https://www.news.com.au/feed/',
+    'Sky News Australia':       'https://feeds.skynews.com.au/feeds/rss/australia.xml',
+    'The Sydney Morning Herald':'https://www.smh.com.au/rss/feed.xml',
+    'Herald Sun':               'https://www.heraldsun.com.au/news/breaking-news/rss',
+}
+
 SOURCES = [
     'BBC World News',
     'Al Jazeera',
@@ -179,6 +191,73 @@ def is_valid(item):
     if any(kw in title for kw in PROMO_KEYWORDS):   return False
     if len(desc) < 20:                               return False
     return True
+
+
+# ═══════════════════════════════════════════════════════
+# AUSTRALIAN RSS SCRAPER
+# ═══════════════════════════════════════════════════════
+def scrape_australian_rss(seen_urls, scrape_time):
+    try:
+        import feedparser
+    except ImportError:
+        print('feedparser not installed — skipping Australian RSS sources.')
+        return []
+
+    rows = []
+    for source_name, feed_url in AUSTRALIAN_RSS_FEEDS.items():
+        try:
+            feed    = feedparser.parse(feed_url)
+            entries = feed.entries
+            print(f'  {source_name}: {len(entries)} entries')
+            for entry in entries:
+                url = entry.get('link', '')
+                if not url or url in seen_urls:
+                    continue
+
+                title = (entry.get('title') or '').strip()
+                desc  = (
+                    entry.get('summary') or
+                    entry.get('description') or
+                    entry.get('content', [{}])[0].get('value', '')
+                ).strip()
+
+                # Strip HTML tags from description
+                import re
+                desc = re.sub(r'<[^>]+>', '', desc).strip()
+
+                if not title or len(desc) < 20:
+                    continue
+
+                # Check for bad URLs and promo content
+                url_lower = url.lower()
+                if any(kw in url_lower for kw in BAD_URL_KEYWORDS):
+                    continue
+                if any(kw in title.lower() for kw in PROMO_KEYWORDS):
+                    continue
+
+                pub_dt  = parse_dt(entry.get('published') or entry.get('updated') or '')
+                hrs_old = age_hours(pub_dt)
+                if hrs_old > MAX_AGE_HOURS:
+                    continue
+
+                rows.append({
+                    'website_name': source_name,
+                    'section':      '',
+                    'title':        title,
+                    'description':  desc,
+                    'ai_summary':   '',
+                    'url':          url,
+                    'published_at': pub_dt.isoformat() if pub_dt else None,
+                    'age_hours':    round(hrs_old, 1),
+                    'scrape_time':  scrape_time,
+                })
+                seen_urls.add(url)
+
+        except Exception as e:
+            print(f'  {source_name}: failed — {e}')
+
+    print(f'Australian RSS total: {len(rows)} new articles')
+    return rows
 
 
 # ═══════════════════════════════════════════════════════
@@ -320,7 +399,13 @@ def main():
         })
         seen_urls.add(url)
 
-    print(f'After content + date filter: {len(rows)} new articles')
+    print(f'Apify after filter: {len(rows)} new articles')
+
+    # ── Australian RSS sources ────────────────────────────
+    print('\nScraping Australian RSS feeds...')
+    aus_rows = scrape_australian_rss(seen_urls, scrape_time)
+    rows.extend(aus_rows)
+    print(f'Combined total: {len(rows)} new articles')
 
     if not rows:
         print('No new articles. Exiting.')

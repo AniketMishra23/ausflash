@@ -1,5 +1,6 @@
 # Pipeline — GitHub Actions
 apify-client
+feedparser
 pandas
 scikit-learn
 python-dateutil
