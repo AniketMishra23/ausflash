@@ -1,13 +1,17 @@
+// SectionTabs — horizontal scrollable pill tabs for filtering by section.
+// Fixed height (48 px) prevents the ScrollView from stretching during loading.
+
 import { View, ScrollView, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { SECTIONS, SECTION_COLORS } from '@/constants/api';
 
 interface Props {
-  active:   string;
-  onChange: (section: string) => void;
+  active:   string;                    // currently selected section label
+  onChange: (section: string) => void; // called when user taps a tab
 }
 
 export default function SectionTabs({ active, onChange }: Props) {
   return (
+    // Outer View constrains height so the ScrollView can't grow during loading
     <View style={styles.wrapper}>
       <ScrollView
         horizontal
@@ -23,6 +27,7 @@ export default function SectionTabs({ active, onChange }: Props) {
               onPress={() => onChange(section)}
               style={[
                 styles.tab,
+                // Active tab: filled with section colour; inactive: outline only
                 isActive
                   ? { backgroundColor: color, borderColor: color }
                   : { borderColor: color },
@@ -42,7 +47,7 @@ export default function SectionTabs({ active, onChange }: Props) {
 
 const styles = StyleSheet.create({
   wrapper: {
-    height: 48,
+    height: 48,                          // fixed — prevents layout shift while loading
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },

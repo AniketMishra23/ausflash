@@ -1,3 +1,6 @@
+// Feed screen — the main (and only visible) screen of AusFlash.
+// Renders an InShorts-style vertical-paging card list.
+
 import {
   View, FlatList, Text, ActivityIndicator,
   StyleSheet, Dimensions, StatusBar, RefreshControl,
@@ -10,16 +13,18 @@ import { useFeed, Article } from '@/hooks/useFeed';
 
 const { width } = Dimensions.get('window');
 
-// Remove near-duplicate articles by title similarity (client-side)
+// ── Client-side deduplication ─────────────────────────────
+// The API may return near-duplicate articles from different sources
+// (e.g. ABC + Guardian both covering the same story).
+// Normalise the first 8 words of each title and discard repeats.
 function dedup(articles: Article[]): Article[] {
   const seen = new Set<string>();
   return articles.filter(a => {
-    // Normalise title: lowercase, remove punctuation, keep first 8 words
     const key = a.title
       .toLowerCase()
-      .replace(/[^a-z0-9 ]/g, '')
+      .replace(/[^a-z0-9 ]/g, '') // strip punctuation
       .split(' ')
-      .slice(0, 8)
+      .slice(0, 8)                 // first 8 words is enough to detect same story
       .join(' ');
     if (seen.has(key)) return false;
     seen.add(key);
@@ -27,7 +32,8 @@ function dedup(articles: Article[]): Article[] {
   });
 }
 
-// Ad placeholder card
+// ── Ad placeholder ────────────────────────────────────────
+// Shown every 5 articles. Replace the inner View with a real AdMob banner later.
 function AdCard({ height }: { height: number }) {
   return (
     <View style={[styles.adCard, { height, width }]}>
@@ -39,7 +45,8 @@ function AdCard({ height }: { height: number }) {
   );
 }
 
-// Inject an ad after every 5 articles
+// Injects an ad item into the feed list after every 5 real articles.
+// Using a discriminated union (_type) so FlatList can tell cards from ads.
 function injectAds(articles: Article[]) {
   const result: any[] = [];
   articles.forEach((article, i) => {
@@ -51,25 +58,31 @@ function injectAds(articles: Article[]) {
   return result;
 }
 
+// ── Screen ────────────────────────────────────────────────
+
 export default function FeedScreen() {
   const [section, setSection]        = useState('All');
   const { articles, loading, error } = useFeed(section);
-  const [refreshKey, setRefreshKey]  = useState(0);
+  const [refreshKey, setRefreshKey]  = useState(0);     // bump to force FlatList reset
   const [refreshing, setRefreshing]  = useState(false);
-  const [cardHeight, setCardHeight]  = useState(0);
+  const [cardHeight, setCardHeight]  = useState(0);     // measured on first render
 
+  // Deduplicate then inject ads
   const clean = dedup(articles);
   const feed  = injectAds(clean);
 
+  // Pull-to-refresh: bump refreshKey so FlatList remounts with fresh data
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setRefreshKey(k => k + 1);
     setTimeout(() => setRefreshing(false), 800);
   }, []);
 
+  // renderItem is memoised so FlatList doesn't recreate it on every render
   const renderItem = useCallback(({ item, index }: { item: any; index: number }) => {
-    if (!cardHeight) return null;
+    if (!cardHeight) return null; // don't render until height is measured
     if (item._type === 'ad') return <AdCard height={cardHeight} />;
+    // Compute the article's index within real articles only (ignoring ad items)
     const realIndex = feed.slice(0, index + 1).filter(i => i._type === 'article').length - 1;
     return <NewsCard article={item} index={realIndex} cardHeight={cardHeight} />;
   }, [feed, cardHeight]);
@@ -78,7 +91,7 @@ export default function FeedScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      {/* Header */}
+      {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.logo}>
           Aus<Text style={styles.logoAccent}>Flash</Text>
@@ -86,10 +99,12 @@ export default function FeedScreen() {
         <Text style={styles.tagline}>Global news. Australian speed.</Text>
       </View>
 
-      {/* Section tabs */}
+      {/* ── Section filter tabs ── */}
       <SectionTabs active={section} onChange={setSection} />
 
-      {/* Feed — measure available height on first render */}
+      {/* ── Feed ─────────────────────────────────────────────
+          onLayout measures the remaining height after header + tabs.
+          This value is passed to each card so they fill the screen exactly. */}
       <View
         style={styles.feedContainer}
         onLayout={e => {
@@ -113,15 +128,16 @@ export default function FeedScreen() {
           </View>
         ) : (
           <FlatList
-            key={`${section}-${refreshKey}`}
+            key={`${section}-${refreshKey}`}  // remount on section change or refresh
             data={feed}
             keyExtractor={(item, i) => item.id ?? `${item._type}-${i}`}
             renderItem={renderItem}
-            pagingEnabled
+            pagingEnabled                      // snap one card at a time
             snapToInterval={cardHeight}
             snapToAlignment="start"
             decelerationRate="fast"
             showsVerticalScrollIndicator={false}
+            // getItemLayout avoids expensive measure calls — all items are the same height
             getItemLayout={(_, index) => ({
               length: cardHeight,
               offset: cardHeight * index,
@@ -140,6 +156,8 @@ export default function FeedScreen() {
     </SafeAreaView>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: {
@@ -170,7 +188,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   feedContainer: {
-    flex: 1,
+    flex: 1, // takes all space below header + tabs
   },
   center: {
     flex: 1,

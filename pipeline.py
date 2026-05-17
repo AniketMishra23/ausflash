@@ -1,21 +1,23 @@
 """
 AusFlash — Daily Pipeline
-Runs via GitHub Actions every day at 6 AM AEST.
+Runs automatically via GitHub Actions every day at 6 AM AEST.
 
 Steps:
-  1. Scrape articles from Apify
-  2. Content filter (bad URLs, promo pages, no description)
-  3. 48-hour date filter
-  4. Exact title deduplication
-  5. TF-IDF similarity deduplication
-  6. Section classification (scoring-based — most keyword matches wins)
-  7. Extractive summarisation via sumy (open-source, no model download)
-  8. Upsert to Supabase (skips URLs already in DB)
+  1. Fetch existing URLs from Supabase (to skip already-stored articles)
+  2. Scrape global articles via Apify actor
+  3. Scrape Australian articles via feedparser RSS
+  4. Content filter  — drop bad URLs, promo pages, short descriptions
+  5. 48-hour date filter — drop articles older than MAX_AGE_HOURS
+  6. Exact title dedup — drop identical titles across sources
+  7. TF-IDF cosine similarity dedup — drop near-duplicate stories (≥ 0.70)
+  8. Section classification — scoring-based keyword match (most hits wins)
+  9. Extractive summarisation — sumy Luhn algorithm (open-source, no API)
+  10. Upsert to Supabase — on_conflict='url' skips any URL already stored
 
-Environment variables required (set as GitHub Actions secrets):
+Required environment variables (set as GitHub Actions secrets):
   APIFY_API_TOKEN   — from apify.com
-  SUPABASE_URL      — from supabase.com project settings
-  SUPABASE_KEY      — service role key (not anon key) from supabase.com
+  SUPABASE_URL      — Supabase project URL (Settings → API)
+  SUPABASE_KEY      — service role key, NOT the anon key (has write access)
 """
 
 import os
@@ -39,9 +41,9 @@ SUPABASE_URL        = os.environ['SUPABASE_URL']
 SUPABASE_KEY        = os.environ['SUPABASE_KEY']
 
 ACTOR_ID            = 'complex_intricate_networks/news-article-scraper-100-global-sources-api'
-MAX_AGE_HOURS       = 48
-SIMILARITY_THRESHOLD = 0.70
-MAX_ARTICLES        = 100
+MAX_AGE_HOURS        = 48    # articles older than this are discarded
+SIMILARITY_THRESHOLD = 0.70  # cosine similarity above this → near-duplicate, keep first
+MAX_ARTICLES         = 100   # max articles to request from the Apify actor per run
 
 # ── Australian RSS feeds (scraped directly via feedparser) ─
 AUSTRALIAN_RSS_FEEDS = {
@@ -155,19 +157,26 @@ SECTION_KEYWORDS = {
     ],
 }
 
-# Scoring-based classifier — section with most keyword matches wins.
-# World is the fallback when nothing else matches.
+# Scoring-based classifier:
+#   - Count how many keywords from each section appear in the article text.
+#   - The section with the most matches wins.
+#   - On a tie, the section that appears earlier in PRIORITY wins.
+#   - If nothing matches, fall back to 'World' (catch-all for international news).
 def classify_section(title, description):
-    text   = (title + ' ' + description).lower()
+    text = (title + ' ' + description).lower()
+
+    # Score every section except World (World is the fallback, not a competitor)
     scores = {
         section: sum(1 for kw in kws if kw in text)
         for section, kws in SECTION_KEYWORDS.items()
         if section != 'World'
     }
     best_score = max(scores.values(), default=0)
+
     if best_score == 0:
-        return 'World'
-    # Among sections tied for best score, pick by priority order
+        return 'World'  # no keyword matched → treat as international news
+
+    # Tie-break: Crime > Tech > Politics > ... (more specific sections rank higher)
     priority = ['Crime', 'Tech', 'Politics', 'Business', 'Science',
                 'Sport', 'Entertainment', 'Lifestyle']
     for section in priority:
@@ -179,8 +188,10 @@ def classify_section(title, description):
 # ═══════════════════════════════════════════════════════
 # FILTERS
 # ═══════════════════════════════════════════════════════
+# URL patterns that indicate non-article pages (video hubs, live blogs, category indexes)
 BAD_URL_KEYWORDS = ['/video/', '/live-news/', '/category/', '/index',
                     '/watch', '/gallery/', '/podcast/', '/audio/', '/live/']
+# Title phrases that indicate sponsored / affiliate content
 PROMO_KEYWORDS   = ['promo code', 'coupon', '% off', 'discount', 'gift guide']
 
 def is_valid(item):
@@ -189,7 +200,7 @@ def is_valid(item):
     desc  = (item.get('description') or '')
     if any(kw in url   for kw in BAD_URL_KEYWORDS): return False
     if any(kw in title for kw in PROMO_KEYWORDS):   return False
-    if len(desc) < 20:                               return False
+    if len(desc) < 20: return False  # no meaningful content to summarise
     return True
 
 
@@ -280,28 +291,47 @@ def age_hours(dt):
 # SIMILARITY DEDUP
 # ═══════════════════════════════════════════════════════
 def deduplicate_by_similarity(df, threshold=0.70):
+    """
+    Remove near-duplicate articles using TF-IDF cosine similarity.
+
+    Two articles are considered duplicates when their combined title+description
+    vectors have cosine similarity >= threshold.  We keep the first article
+    (whichever appeared earlier in the list, usually from a higher-priority source)
+    and drop the later one.
+    """
     if len(df) < 2:
         return df
-    texts      = (df['title'].fillna('') + ' ' + df['description'].fillna('')).tolist()
+
+    # Combine title + description so both headline and body influence similarity
+    texts = (df['title'].fillna('') + ' ' + df['description'].fillna('')).tolist()
+
+    # Bigrams (ngram_range=(1,2)) capture phrases like "interest rate" better than unigrams alone
     vectorizer = TfidfVectorizer(stop_words='english', max_features=5000, ngram_range=(1, 2))
     tfidf      = vectorizer.fit_transform(texts)
-    sim        = cosine_similarity(tfidf)
-    to_drop    = set()
+    sim        = cosine_similarity(tfidf)  # n×n matrix
+
+    to_drop = set()
     for i in range(len(df)):
         if i in to_drop: continue
         for j in range(i + 1, len(df)):
+            # Mark j for removal if it's too similar to i (which we're keeping)
             if j not in to_drop and sim[i, j] >= threshold:
                 to_drop.add(j)
+
     result = df.drop(index=list(to_drop)).reset_index(drop=True)
     print(f'  Similarity dedup: {len(df)} → {len(result)} ({len(to_drop)} near-duplicates removed)')
     return result
 
 
 # ═══════════════════════════════════════════════════════
-# SUMMARISATION — sumy (open-source, no model download)
-# Uses Luhn extractive algorithm to pick the most
-# informative sentences from the description.
-# Falls back to sentence-aware truncation if sumy fails.
+# SUMMARISATION — sumy (open-source, no API key required)
+#
+# Uses the Luhn extractive algorithm: scores sentences by
+# keyword frequency and picks the 2 most informative ones.
+# Capped at 60 words so cards stay readable on mobile.
+#
+# Falls back to sentence-aware word-count truncation if
+# sumy is not installed or raises an unexpected error.
 # ═══════════════════════════════════════════════════════
 try:
     from sumy.parsers.plaintext import PlaintextParser
@@ -316,29 +346,33 @@ def summarise(title, description):
     if not text or len(text) < 30:
         return text or 'Summary not available.'
 
-    # sumy extractive summarisation
+    # ── sumy extractive summarisation ─────────────────────
     if _sumy_ready:
         try:
+            # Prepend title so the summariser can score sentences against it
             combined = f'{title}. {text}'
             parser   = PlaintextParser.from_string(combined, Tokenizer('english'))
             summary  = LuhnSummarizer()(parser.document, sentences_count=2)
             result   = ' '.join(str(s) for s in summary).strip()
             if result:
                 words = result.split()
+                # Hard cap at 60 words to keep card text concise
                 return ' '.join(words[:60]) + ('...' if len(words) > 60 else '')
         except Exception:
-            pass
+            pass  # fall through to the word-count fallback
 
-    # Fallback: sentence-aware truncation
+    # ── Fallback: sentence-aware word-count truncation ────
+    # Truncates at a sentence boundary inside the first 60 words
+    # so the text doesn't end mid-sentence.
     words = text.split()
     if len(words) <= 60:
         return text
     chunk = ' '.join(words[:60])
     for punct in ('. ', '! ', '? '):
         idx = chunk.rfind(punct)
-        if idx > 20:
+        if idx > 20:                  # ignore very short fragments
             return chunk[:idx + 1]
-    return chunk + '...'
+    return chunk + '...'              # no sentence boundary found — hard truncate
 
 
 # ═══════════════════════════════════════════════════════
@@ -353,22 +387,28 @@ def main():
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
     print('Connected to Supabase.')
 
-    # ── Fetch existing URLs to skip duplicates ────────────
+    # ── Fetch existing URLs ───────────────────────────────
+    # Pre-loading all URLs lets us skip Supabase round-trips for each article.
+    # Also passed into scrape_australian_rss() so RSS sources don't re-add
+    # articles that Apify already returned.
     existing = sb.table('articles').select('url').execute()
     seen_urls = {row['url'] for row in existing.data}
     print(f'Existing articles in DB: {len(seen_urls)}')
 
-    # ── Run Apify Actor ───────────────────────────────────
+    # ── Apify scrape ──────────────────────────────────────
+    # The actor fetches top-news articles from the sources listed in SOURCES.
+    # 'countries': ['Australia'] biases results toward Australian-relevant stories.
     print('\nCalling Apify Actor...')
     client = ApifyClient(APIFY_API_TOKEN)
     run    = client.actor(ACTOR_ID).call(run_input={
         'category':           'Top news',
-        'countries':          ['Australia'],
+        'countries':          ['Australia'],  # geographic bias
         'sources':            SOURCES,
         'maxArticles':        MAX_ARTICLES,
-        'keywordFilter':      '',
+        'keywordFilter':      '',             # no keyword restriction — keep everything
         'proxyConfiguration': {'useApifyProxy': True},
     })
+    # iterate_items() streams results without loading the full dataset into memory
     items = list(client.dataset(run['defaultDatasetId']).iterate_items())
     print(f'Apify returned {len(items)} raw articles.')
 
@@ -431,7 +471,9 @@ def main():
     records = df.to_dict(orient='records')
     print(f'\nUpserting {len(records)} articles to Supabase...')
 
-    # Batch in chunks of 100 to stay within Supabase limits
+    # Batch in chunks of 100 — Supabase rejects very large single payloads.
+    # on_conflict='url' means: if the URL already exists, update the row
+    # (re-classifies section/summary if pipeline logic has improved).
     chunk_size = 100
     inserted   = 0
     for i in range(0, len(records), chunk_size):

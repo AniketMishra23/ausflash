@@ -1,3 +1,7 @@
+// NewsCard — full-screen card for a single article.
+// Rendered inside a paginated FlatList; height is passed in from the parent
+// so it fills exactly the available space below the header and section tabs.
+
 import {
   View, Text, TouchableOpacity, StyleSheet,
   Dimensions, Linking, Alert,
@@ -5,8 +9,11 @@ import {
 import { Article } from '@/hooks/useFeed';
 import { SECTION_COLORS } from '@/constants/api';
 
-const { width } = Dimensions.get('window');
+const { width } = Dimensions.get('window'); // card always spans the full screen width
 
+// ── Helpers ───────────────────────────────────────────────
+
+// Converts a UTC timestamp into a human-readable relative string ("3h ago").
 function timeAgo(publishedAt: string): string {
   if (!publishedAt) return '';
   try {
@@ -22,10 +29,12 @@ function timeAgo(publishedAt: string): string {
   }
 }
 
+// Picks the best available summary text.
+// Prefers ai_summary (sumy-generated) when it's at least 20 words;
+// falls back to truncated description if the summary is too short or missing.
 function getSummary(article: Article): string {
   const summary = article.ai_summary?.trim() ?? '';
   const desc    = article.description?.trim() ?? '';
-  // Use ai_summary only if it has at least 20 words
   if (summary.split(' ').length >= 20) return summary;
   if (desc.length > 0) {
     const words = desc.split(' ');
@@ -34,6 +43,7 @@ function getSummary(article: Article): string {
   return summary;
 }
 
+// Opens the article URL in the device's default browser.
 async function openArticle(url: string) {
   try {
     await Linking.openURL(url);
@@ -42,19 +52,22 @@ async function openArticle(url: string) {
   }
 }
 
+// ── Component ─────────────────────────────────────────────
+
 interface Props {
   article:    Article;
-  index:      number;
-  cardHeight: number;
+  index:      number;      // 0-based position in the feed (shown as card counter)
+  cardHeight: number;      // measured dynamically by the parent via onLayout
 }
 
 export default function NewsCard({ article, index, cardHeight }: Props) {
-  const color   = SECTION_COLORS[article.section] ?? '#1D9E75';
+  const color   = SECTION_COLORS[article.section] ?? '#1D9E75'; // fallback: brand green
   const summary = getSummary(article);
 
   return (
     <View style={[styles.card, { height: cardHeight }]}>
-      {/* Source + time */}
+
+      {/* ── Source badge + publish time ── */}
       <View style={styles.meta}>
         <View style={[styles.sourceBadge, { backgroundColor: color }]}>
           <Text style={styles.sourceText} numberOfLines={1}>{article.website_name}</Text>
@@ -62,19 +75,19 @@ export default function NewsCard({ article, index, cardHeight }: Props) {
         <Text style={styles.time}>{timeAgo(article.published_at)}</Text>
       </View>
 
-      {/* Section label */}
+      {/* ── Section label (e.g. "TECH") ── */}
       <Text style={[styles.sectionLabel, { color }]}>{article.section.toUpperCase()}</Text>
 
-      {/* Title */}
+      {/* ── Headline ── */}
       <Text style={styles.title}>{article.title}</Text>
 
-      {/* Divider */}
+      {/* ── Accent divider (colour matches section) ── */}
       <View style={[styles.divider, { backgroundColor: color }]} />
 
-      {/* Summary */}
+      {/* ── Summary / description ── */}
       <Text style={styles.summary}>{summary}</Text>
 
-      {/* Read more */}
+      {/* ── Read full article button ── */}
       <TouchableOpacity
         style={[styles.readMore, { borderColor: color }]}
         onPress={() => openArticle(article.url)}
@@ -83,18 +96,20 @@ export default function NewsCard({ article, index, cardHeight }: Props) {
         <Text style={[styles.readMoreText, { color }]}>Read full article →</Text>
       </TouchableOpacity>
 
-      {/* Card counter */}
+      {/* ── Card index (bottom-right corner) ── */}
       <Text style={styles.counter}>{index + 1}</Text>
     </View>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   card: {
     width,
     backgroundColor: '#fff',
     paddingHorizontal: 24,
-    paddingTop: 28,
+    paddingTop: 28,       // breathing room below the section tabs
     paddingBottom: 32,
     justifyContent: 'flex-start',
   },
@@ -108,7 +123,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 4,
-    maxWidth: 180,
+    maxWidth: 180,        // prevents long source names from pushing the timestamp off
   },
   sourceText: {
     color: '#fff',
