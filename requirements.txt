@@ -1,5 +1,13 @@
+# Pipeline — GitHub Actions
 apify-client
 pandas
 scikit-learn
 python-dateutil
+
+# Shared
 supabase
+
+# API — Vercel
+fastapi
+uvicorn
+python-dotenv
