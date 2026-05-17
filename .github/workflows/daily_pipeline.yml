@@ -1,0 +1,43 @@
+name: AusFlash Daily Pipeline
+
+on:
+  schedule:
+    # Runs at 8:00 PM UTC = 6:00 AM AEST (UTC+10)
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    # Allows you to trigger manually from GitHub Actions tab anytime
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── Checkout repo ─────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python setup ──────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── Install dependencies ───────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install apify-client pandas scikit-learn python-dateutil supabase
+
+      # ── Run pipeline ──────────────────────────────────────
+      - name: Run AusFlash pipeline
+        env:
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+          SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
+        run: python pipeline.py
+
+      # ── Summary ───────────────────────────────────────────
+      - name: Pipeline complete
+        run: echo "AusFlash pipeline finished at $(date -u)"
