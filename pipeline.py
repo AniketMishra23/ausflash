@@ -420,67 +420,42 @@ def _word_overlap(sentence, title):
         return 0.0
     return len(s_words & t_words) / len(s_words)
 
-BULLET_MAX_WORDS = 25   # max words per bullet — 3 × 25 = ~75 word ceiling
-
-def _trim_bullet(sentence, max_words=BULLET_MAX_WORDS):
-    """Hard-truncate a single bullet at max_words."""
-    words = sentence.split()
-    if len(words) <= max_words:
-        return sentence.rstrip('.')
-    return ' '.join(words[:max_words]) + '...'
-
 def summarise(title, description):
     import re
     text = (description or '').strip()
     if not text:
-        return f'• {title}' if title else 'Summary not available.'
+        return title or 'Summary not available.'
 
-    # Split description into individual sentences (min 10 chars to filter noise)
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text)
                  if len(s.strip()) > 10]
 
-    # ── 3-bullet format: Lead | Detail | Conclusion ───────
+    # ── Option D format: Bold lead + supporting body ───────
     #
-    # Lead       = first sentence — always the most important (journalism rule)
-    # Detail     = best middle sentence picked by sumy (or first middle sentence)
-    # Conclusion = last sentence — outcome, reaction, or "what's next"
+    # Line 1 (lead)   — first sentence, rendered bold on the card.
+    #                   Always the most important fact (journalism rule).
+    # Line 2 (body)   — remaining sentences joined and truncated to ~40 words,
+    #                   giving a total of ~60 words across both lines.
     #
-    # If the description has fewer than 3 sentences, we fill missing slots
-    # using the title (for lead) so every article has a meaningful entry.
+    # Stored as "lead\nbody" — the \n is the separator the frontend uses
+    # to split and apply bold styling to the first line.
 
-    lead       = sentences[0] if sentences else title
-    conclusion = sentences[-1] if len(sentences) > 1 else ''
-    detail     = ''
+    if not sentences:
+        # No sentence boundary found — use title as lead, raw text as body
+        return f'{title}\n{_truncate(text, max_words=40)}'
 
-    middle = sentences[1:-1] if len(sentences) > 2 else []
-    if middle:
-        if _sumy_ready and len(middle) > 1:
-            try:
-                parser     = PlaintextParser.from_string(' '.join(middle), Tokenizer('english'))
-                candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=2)]
-                kept       = [s for s in candidates if _word_overlap(s, title) < 0.6]
-                if kept:
-                    detail = kept[0]
-            except Exception:
-                pass
-        if not detail:
-            detail = middle[0]  # fallback: first middle sentence
+    lead = sentences[0]
 
-    # If still no detail (only 2 sentences), use the title as the lead bullet
-    # and promote sentence[0] to detail so we have two distinct bullets
-    if not detail and lead != title:
-        detail = lead
-        lead   = title
+    # Remaining sentences form the body
+    rest = sentences[1:]
+    if rest:
+        body = _truncate(' '.join(rest), max_words=40)
+    else:
+        # Only one sentence in description — use title as lead so the
+        # body still has unique content
+        lead = title
+        body = _truncate(sentences[0], max_words=40)
 
-    # Deduplicate — drop any bullet that's identical to a previous one
-    seen, parts = set(), []
-    for sent in [lead, detail, conclusion]:
-        if sent and sent not in seen:
-            seen.add(sent)
-            parts.append(sent)
-
-    # Format as bullet list — each line trimmed to BULLET_MAX_WORDS
-    return '\n'.join(f'• {_trim_bullet(p)}' for p in parts[:3])
+    return f'{lead}\n{body}'
 
 
 # ═══════════════════════════════════════════════════════

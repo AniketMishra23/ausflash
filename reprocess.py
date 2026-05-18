@@ -36,52 +36,28 @@ except ImportError:
     _sumy_ready = False
     print('sumy not found — run: pip install sumy nltk')
 
-BULLET_MAX_WORDS = 25
-
-def _trim_bullet(sentence, max_words=BULLET_MAX_WORDS):
-    words = sentence.split()
-    if len(words) <= max_words:
-        return sentence.rstrip('.')
-    return ' '.join(words[:max_words]) + '...'
-
 def summarise(title, description):
     import re
     text = (description or '').strip()
     if not text:
-        return f'• {title}' if title else 'Summary not available.'
+        return title or 'Summary not available.'
 
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text)
                  if len(s.strip()) > 10]
 
-    lead       = sentences[0] if sentences else title
-    conclusion = sentences[-1] if len(sentences) > 1 else ''
-    detail     = ''
+    if not sentences:
+        return f'{title}\n{_truncate(text, max_words=40)}'
 
-    middle = sentences[1:-1] if len(sentences) > 2 else []
-    if middle:
-        if _sumy_ready and len(middle) > 1:
-            try:
-                parser     = PlaintextParser.from_string(' '.join(middle), Tokenizer('english'))
-                candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=2)]
-                kept       = [s for s in candidates if _word_overlap(s, title) < 0.6]
-                if kept:
-                    detail = kept[0]
-            except Exception:
-                pass
-        if not detail:
-            detail = middle[0]
+    lead = sentences[0]
+    rest = sentences[1:]
 
-    if not detail and lead != title:
-        detail = lead
-        lead   = title
+    if rest:
+        body = _truncate(' '.join(rest), max_words=40)
+    else:
+        lead = title
+        body = _truncate(sentences[0], max_words=40)
 
-    seen, parts = set(), []
-    for sent in [lead, detail, conclusion]:
-        if sent and sent not in seen:
-            seen.add(sent)
-            parts.append(sent)
-
-    return '\n'.join(f'• {_trim_bullet(p)}' for p in parts[:3])
+    return f'{lead}\n{body}'
 
 # ── Main ──────────────────────────────────────────────────
 def main():

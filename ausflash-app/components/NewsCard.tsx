@@ -29,27 +29,27 @@ function timeAgo(publishedAt: string): string {
   }
 }
 
-// Returns bullet lines if the summary is in bullet format ("• ..."),
-// otherwise returns a single string for plain-text fallback.
-function getSummaryLines(article: Article): string[] {
+// Splits the summary into a bold lead and a regular body.
+// The pipeline stores summaries as "lead sentence\nbody sentences".
+// Old plain-text summaries (no \n) are shown as body only.
+function getSummaryParts(article: Article): { lead: string; body: string } {
   const summary = article.ai_summary?.trim() ?? '';
   const desc    = article.description?.trim() ?? '';
 
-  // New bullet format from pipeline — split into individual lines
-  if (summary.startsWith('•')) {
-    return summary.split('\n').filter(l => l.trim().length > 0);
+  if (summary.includes('\n')) {
+    const idx = summary.indexOf('\n');
+    return { lead: summary.slice(0, idx).trim(), body: summary.slice(idx + 1).trim() };
   }
 
-  // Old plain-text summary — wrap as single item so rendering is uniform
-  if (summary.length > 0) return [summary];
+  // Old plain-text summary — no bold lead
+  if (summary.length > 0) return { lead: '', body: summary };
 
-  // No summary at all — fall back to raw description (truncated)
+  // No summary — fall back to description
   if (desc.length > 0) {
     const words = desc.split(' ');
-    const text  = words.length > 60 ? words.slice(0, 60).join(' ') + '...' : desc;
-    return [text];
+    return { lead: '', body: words.length > 60 ? words.slice(0, 60).join(' ') + '...' : desc };
   }
-  return ['Summary not available.'];
+  return { lead: '', body: 'Summary not available.' };
 }
 
 // Opens the article URL in the device's default browser.
@@ -70,9 +70,8 @@ interface Props {
 }
 
 export default function NewsCard({ article, index, cardHeight }: Props) {
-  const color        = SECTION_COLORS[article.section] ?? '#1D9E75'; // fallback: brand green
-  const summaryLines = getSummaryLines(article);
-  const isBullet     = summaryLines.length > 1 || summaryLines[0]?.startsWith('•');
+  const color                = SECTION_COLORS[article.section] ?? '#1D9E75';
+  const { lead, body }       = getSummaryParts(article);
 
   return (
     <View style={[styles.card, { height: cardHeight }]}>
@@ -94,16 +93,11 @@ export default function NewsCard({ article, index, cardHeight }: Props) {
       {/* ── Accent divider (colour matches section) ── */}
       <View style={[styles.divider, { backgroundColor: color }]} />
 
-      {/* ── Summary — bullet list or plain text ── */}
-      {isBullet ? (
-        <View style={styles.bulletList}>
-          {summaryLines.map((line, i) => (
-            <Text key={i} style={styles.bulletLine}>{line}</Text>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.summary}>{summaryLines[0]}</Text>
-      )}
+      {/* ── Summary: bold lead + regular body ── */}
+      <View style={styles.summaryContainer}>
+        {lead ? <Text style={styles.summaryLead}>{lead}</Text> : null}
+        {body ? <Text style={styles.summaryBody}>{body}</Text> : null}
+      </View>
 
       {/* ── Read full article button ── */}
       <TouchableOpacity
@@ -178,14 +172,20 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     marginBottom: 28,
   },
-  bulletList: {
+  summaryContainer: {
     marginBottom: 28,
-    gap: 10,            // space between bullets
+    gap: 8,
   },
-  bulletLine: {
+  summaryLead: {
+    fontSize: 16,
+    fontWeight: '700',  // bold — the "what happened" line
+    color: '#111',
+    lineHeight: 24,
+  },
+  summaryBody: {
     fontSize: 15,
-    color: '#444',
-    lineHeight: 23,
+    color: '#555',
+    lineHeight: 24,
   },
   readMore: {
     alignSelf: 'flex-start',
