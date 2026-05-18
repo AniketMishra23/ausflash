@@ -29,18 +29,38 @@ function timeAgo(publishedAt: string): string {
   }
 }
 
+// Returns the fraction of `text` words that also appear in `title`.
+// Used to detect summaries that are just a headline rewrite.
+function wordOverlap(text: string, title: string): number {
+  const textWords  = new Set(text.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(Boolean));
+  const titleWords = new Set(title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(Boolean));
+  if (textWords.size === 0) return 0;
+  let shared = 0;
+  textWords.forEach(w => { if (titleWords.has(w)) shared++; });
+  return shared / textWords.size;
+}
+
 // Picks the best available summary text.
-// Prefers ai_summary (sumy-generated) when it's at least 20 words;
-// falls back to truncated description if the summary is too short or missing.
+// 1. Use ai_summary if it's ≥20 words AND doesn't heavily overlap with the title.
+// 2. Fall back to the raw description (truncated to 60 words).
+// This guards against the pipeline returning a summary that's just the headline
+// rephrased — which can happen when an RSS description is only 1-2 sentences.
 function getSummary(article: Article): string {
   const summary = article.ai_summary?.trim() ?? '';
   const desc    = article.description?.trim() ?? '';
-  if (summary.split(' ').length >= 20) return summary;
+
+  const summaryWords = summary.split(' ').filter(Boolean);
+  const isTooShort   = summaryWords.length < 20;
+  const isHeadline   = wordOverlap(summary, article.title) > 0.55; // >55% overlap = headline rewrite
+
+  if (!isTooShort && !isHeadline) return summary;
+
+  // Fall back to description
   if (desc.length > 0) {
     const words = desc.split(' ');
     return words.length > 60 ? words.slice(0, 60).join(' ') + '...' : desc;
   }
-  return summary;
+  return summary || 'Summary not available.';
 }
 
 // Opens the article URL in the device's default browser.

@@ -386,11 +386,20 @@ def deduplicate_by_similarity(df, threshold=0.70):
 # SUMMARISATION — sumy (open-source, no API key required)
 #
 # Uses the Luhn extractive algorithm: scores sentences by
-# keyword frequency and picks the 2 most informative ones.
+# keyword frequency and picks the most informative ones.
 # Capped at 60 words so cards stay readable on mobile.
 #
+# Key fix: title is NOT fed into sumy. Feeding the title
+# caused it to prefer sentences that restate the headline
+# (those matched the most title keywords). Now sumy scores
+# sentences purely on their own information density.
+#
+# Any extracted sentence with >55% word-overlap with the
+# title is discarded — it's just a headline rewrite.
+#
 # Falls back to sentence-aware word-count truncation if
-# sumy is not installed or raises an unexpected error.
+# sumy is not installed, all sentences were headline
+# rewrites, or sumy raises an unexpected error.
 # ═══════════════════════════════════════════════════════
 try:
     from sumy.parsers.plaintext import PlaintextParser
@@ -400,6 +409,29 @@ try:
 except ImportError:
     _sumy_ready = False
 
+def _word_overlap(sentence, title):
+    """
+    Fraction of the sentence's words that also appear in the title (0–1).
+    Used to detect sentences that are just a headline rewrite.
+    """
+    s_words = set(sentence.lower().split())
+    t_words = set(title.lower().split())
+    if not s_words:
+        return 0.0
+    return len(s_words & t_words) / len(s_words)
+
+def _truncate(text):
+    """Sentence-aware truncation at 60 words."""
+    words = text.split()
+    if len(words) <= 60:
+        return text
+    chunk = ' '.join(words[:60])
+    for punct in ('. ', '! ', '? '):
+        idx = chunk.rfind(punct)
+        if idx > 20:        # ignore very short fragments before the punctuation
+            return chunk[:idx + 1]
+    return chunk + '...'    # no sentence boundary found — hard truncate
+
 def summarise(title, description):
     text = (description or '').strip()
     if not text or len(text) < 30:
@@ -408,30 +440,24 @@ def summarise(title, description):
     # ── sumy extractive summarisation ─────────────────────
     if _sumy_ready:
         try:
-            # Prepend title so the summariser can score sentences against it
-            combined = f'{title}. {text}'
-            parser   = PlaintextParser.from_string(combined, Tokenizer('english'))
-            summary  = LuhnSummarizer()(parser.document, sentences_count=2)
-            result   = ' '.join(str(s) for s in summary).strip()
+            # Pass description only — NOT the title.
+            # Including the title biased Luhn toward title-echoing sentences.
+            parser = PlaintextParser.from_string(text, Tokenizer('english'))
+            # Request 3 candidates so we have spares after filtering
+            candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=3)]
+
+            # Drop any sentence that's mostly a restatement of the headline
+            kept = [s for s in candidates if _word_overlap(s, title) < 0.55]
+
+            # Use up to 2 kept sentences; fall back to truncation if all were filtered
+            result = ' '.join(kept[:2]).strip()
             if result:
-                words = result.split()
-                # Hard cap at 60 words to keep card text concise
-                return ' '.join(words[:60]) + ('...' if len(words) > 60 else '')
+                return _truncate(result)
         except Exception:
             pass  # fall through to the word-count fallback
 
     # ── Fallback: sentence-aware word-count truncation ────
-    # Truncates at a sentence boundary inside the first 60 words
-    # so the text doesn't end mid-sentence.
-    words = text.split()
-    if len(words) <= 60:
-        return text
-    chunk = ' '.join(words[:60])
-    for punct in ('. ', '! ', '? '):
-        idx = chunk.rfind(punct)
-        if idx > 20:                  # ignore very short fragments
-            return chunk[:idx + 1]
-    return chunk + '...'              # no sentence boundary found — hard truncate
+    return _truncate(text)
 
 
 # ═══════════════════════════════════════════════════════
