@@ -11,7 +11,7 @@ Steps:
   6. Exact title dedup — drop identical titles across sources
   7. TF-IDF cosine similarity dedup — drop near-duplicate stories (≥ 0.70)
   8. Section classification — scoring-based keyword match (most hits wins)
-  9. Extractive summarisation — sumy Luhn algorithm (open-source, no API)
+  9. Abstractive summarisation — sshleifer/distilbart-cnn-12-6 (falls back to extractive on error)
   10. Upsert to Supabase — on_conflict='url' skips any URL already stored
 
 Required environment variables (set as GitHub Actions secrets):
@@ -383,42 +383,43 @@ def deduplicate_by_similarity(df, threshold=0.70):
 
 
 # ═══════════════════════════════════════════════════════
-# SUMMARISATION — sumy (open-source, no API key required)
+# SUMMARISATION — sshleifer/distilbart-cnn-12-6
 #
-# Uses the Luhn extractive algorithm: scores sentences by
-# keyword frequency and picks the most informative ones.
-# Capped at 60 words so cards stay readable on mobile.
+# Abstractive model fine-tuned on CNN/DailyMail news.
+# Generates genuinely new sentences — does not echo the
+# headline the way extractive methods do.
 #
-# Key fix: title is NOT fed into sumy. Feeding the title
-# caused it to prefer sentences that restate the headline
-# (those matched the most title keywords). Now sumy scores
-# sentences purely on their own information density.
+# Output format (stored in ai_summary):
+#   "lead sentence\nbody sentence(s)"
+#   The frontend splits on \n: lead is bold, body is grey.
 #
-# Any extracted sentence with >55% word-overlap with the
-# title is discarded — it's just a headline rewrite.
-#
-# Falls back to sentence-aware word-count truncation if
-# sumy is not installed, all sentences were headline
-# rewrites, or sumy raises an unexpected error.
+# Falls back to extractive sentence-split if the model
+# fails to load or raises an error at inference time.
 # ═══════════════════════════════════════════════════════
 try:
-    from sumy.parsers.plaintext import PlaintextParser
-    from sumy.nlp.tokenizers import Tokenizer
-    from sumy.summarizers.luhn import LuhnSummarizer
-    _sumy_ready = True
-except ImportError:
-    _sumy_ready = False
+    from transformers import pipeline as hf_pipeline
+    _summarizer = hf_pipeline(
+        'summarization',
+        model='sshleifer/distilbart-cnn-12-6',
+        device=-1,        # CPU — no GPU in GitHub Actions
+    )
+    _hf_ready = True
+    print('BART summarizer loaded.')
+except Exception as _e:
+    _hf_ready = False
+    print(f'BART not available ({_e}) — using extractive fallback.')
 
-def _word_overlap(sentence, title):
-    """
-    Fraction of the sentence's words that also appear in the title (0–1).
-    Used to detect sentences that are just a headline rewrite.
-    """
-    s_words = set(sentence.lower().split())
-    t_words = set(title.lower().split())
-    if not s_words:
-        return 0.0
-    return len(s_words & t_words) / len(s_words)
+def _truncate(text, max_words=65):
+    """Sentence-aware truncation at max_words."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    chunk = ' '.join(words[:max_words])
+    for punct in ('. ', '! ', '? '):
+        idx = chunk.rfind(punct)
+        if idx > 20:
+            return chunk[:idx + 1]
+    return chunk + '...'
 
 def summarise(title, description):
     import re
@@ -426,36 +427,40 @@ def summarise(title, description):
     if not text:
         return title or 'Summary not available.'
 
+    # ── Abstractive path (BART) ────────────────────────────
+    if _hf_ready:
+        try:
+            combined = f'{title}. {text}'
+            result   = _summarizer(
+                combined,
+                max_length=90,
+                min_length=55,
+                do_sample=False,
+                truncation=True,
+            )
+            summary = result[0]['summary_text'].strip()
+            if summary:
+                parts = [s.strip() for s in re.split(r'(?<=[.!?])\s+', summary)
+                         if len(s.strip()) > 5]
+                if parts:
+                    lead = parts[0]
+                    body = ' '.join(parts[1:]) if len(parts) > 1 else ''
+                    return f'{lead}\n{body}' if body else f'{title}\n{summary}'
+        except Exception as _e:
+            print(f'  BART inference error: {_e} — using extractive fallback.')
+
+    # ── Extractive fallback ────────────────────────────────
+    # Split description into sentences; use title as bold lead so the
+    # body always adds new information beyond the headline.
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text)
                  if len(s.strip()) > 10]
-
-    # ── Option D format: Bold lead + supporting body ───────
-    #
-    # Line 1 (lead)   — first sentence, rendered bold on the card.
-    #                   Always the most important fact (journalism rule).
-    # Line 2 (body)   — remaining sentences joined and truncated to ~40 words,
-    #                   giving a total of ~60 words across both lines.
-    #
-    # Stored as "lead\nbody" — the \n is the separator the frontend uses
-    # to split and apply bold styling to the first line.
-
     if not sentences:
-        # No sentence boundary found — use title as lead, raw text as body
         return f'{title}\n{_truncate(text, max_words=40)}'
-
     lead = sentences[0]
-
-    # Remaining sentences form the body
     rest = sentences[1:]
     if rest:
-        body = _truncate(' '.join(rest), max_words=40)
-    else:
-        # Only one sentence in description — use title as lead so the
-        # body still has unique content
-        lead = title
-        body = _truncate(sentences[0], max_words=40)
-
-    return f'{lead}\n{body}'
+        return f'{lead}\n{_truncate(" ".join(rest), max_words=40)}'
+    return f'{title}\n{_truncate(sentences[0], max_words=40)}'
 
 
 # ═══════════════════════════════════════════════════════

@@ -6,6 +6,7 @@ scikit-learn
 python-dateutil
 sumy
 nltk
+transformers
 
 # Shared
 supabase

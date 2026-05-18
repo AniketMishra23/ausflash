@@ -13,7 +13,7 @@ env:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       # ── Checkout repo ─────────────────────────────────────
@@ -28,11 +28,22 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
 
+      # ── Cache HuggingFace BART model ──────────────────────
+      # Static key — model weights don't change, so this hit every run after the first.
+      - name: Cache HuggingFace model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-distilbart-cnn-12-6
+
       # ── Install dependencies ───────────────────────────────
+      # torch is installed separately with the CPU-only index URL.
+      # Adding it to requirements.txt would pull the CUDA build (~2.5 GB).
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       # ── Run pipeline ──────────────────────────────────────
       - name: Run AusFlash pipeline
