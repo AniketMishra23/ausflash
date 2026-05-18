@@ -438,49 +438,31 @@ def _truncate(text, max_words=MAX_SUMMARY_WORDS):
 def summarise(title, description):
     import re
     text = (description or '').strip()
-    if not text or len(text) < 30:
-        return text or 'Summary not available.'
+    if not text:
+        return (title or 'Summary not available.')
 
-    # ── sumy extractive summarisation ─────────────────────
+    # ── Step 1: try sumy on description only ──────────────
+    # If sumy produces ≥ MIN_SUMMARY_WORDS of non-headline content, use it.
     if _sumy_ready:
         try:
-            # Pass description only — NOT the title.
-            # Including the title biased Luhn toward title-echoing sentences.
-            parser = PlaintextParser.from_string(text, Tokenizer('english'))
-            # Request 5 candidates so we have spares after filtering
+            parser     = PlaintextParser.from_string(text, Tokenizer('english'))
             candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=5)]
+            kept       = [s for s in candidates if _word_overlap(s, title) < 0.55]
+            result     = ' '.join(kept[:3]).strip()
 
-            # Drop any sentence that's mostly a restatement of the headline
-            kept = [s for s in candidates if _word_overlap(s, title) < 0.55]
-
-            result = ' '.join(kept[:3]).strip()  # start with up to 3 sentences
-
-            # ── Pad to minimum word count ─────────────────
-            # If sumy sentences are short, pull in more sentences from the
-            # original text until we reach MIN_SUMMARY_WORDS.
-            if result and len(result.split()) < MIN_SUMMARY_WORDS:
-                all_sentences = re.split(r'(?<=[.!?])\s+', text)
-                for sent in all_sentences:
-                    sent = sent.strip()
-                    if not sent or sent in result:
-                        continue
-                    if _word_overlap(sent, title) >= 0.55:
-                        continue
-                    padded = (result + ' ' + sent).strip()
-                    if len(padded.split()) > MAX_SUMMARY_WORDS:
-                        break   # adding this would exceed the cap
-                    result = padded
-                    if len(result.split()) >= MIN_SUMMARY_WORDS:
-                        break
-
-            if result:
-                return _truncate(result)
+            if result and len(result.split()) >= MIN_SUMMARY_WORDS:
+                return _truncate(result)  # sumy gave enough — use it
         except Exception:
-            pass  # fall through to the word-count fallback
+            pass
 
-    # ── Fallback: sentence-aware word-count truncation ────
-    # _truncate at MAX_SUMMARY_WORDS guarantees ~50-65 words from description
-    return _truncate(text)
+    # ── Step 2: mix title + description ───────────────────
+    # Description alone was too short or sumy failed.
+    # Prepend the title so the summary always has full context:
+    #   "Title sentence. Description detail..." → truncated to ~60 words.
+    # This guarantees a meaningful, information-dense summary even for
+    # articles whose RSS descriptions are only 1-2 short sentences.
+    combined = f'{title}. {text}'
+    return _truncate(combined)
 
 
 # ═══════════════════════════════════════════════════════

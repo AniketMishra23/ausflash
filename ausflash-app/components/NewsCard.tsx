@@ -29,33 +29,19 @@ function timeAgo(publishedAt: string): string {
   }
 }
 
-// Returns the fraction of `text` words that also appear in `title`.
-// Used to detect summaries that are just a headline rewrite.
-function wordOverlap(text: string, title: string): number {
-  const textWords  = new Set(text.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(Boolean));
-  const titleWords = new Set(title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(Boolean));
-  if (textWords.size === 0) return 0;
-  let shared = 0;
-  textWords.forEach(w => { if (titleWords.has(w)) shared++; });
-  return shared / textWords.size;
-}
-
 // Picks the best available summary text.
-// 1. Use ai_summary if it's ≥20 words AND doesn't heavily overlap with the title.
-// 2. Fall back to the raw description (truncated to 60 words).
-// This guards against the pipeline returning a summary that's just the headline
-// rephrased — which can happen when an RSS description is only 1-2 sentences.
+// The pipeline now guarantees ≥50 words by mixing title + description when
+// the description alone is too short, so we just check word count here.
+// Falls back to raw description if ai_summary is missing or too short
+// (e.g. old articles stored before the 50-word rule was added).
 function getSummary(article: Article): string {
   const summary = article.ai_summary?.trim() ?? '';
   const desc    = article.description?.trim() ?? '';
 
-  const summaryWords = summary.split(' ').filter(Boolean);
-  const isTooShort   = summaryWords.length < 50;                   // enforce ~50 word minimum
-  const isHeadline   = wordOverlap(summary, article.title) > 0.55; // >55% overlap = headline rewrite
+  // Use ai_summary if it meets the minimum length
+  if (summary.split(' ').filter(Boolean).length >= 50) return summary;
 
-  if (!isTooShort && !isHeadline) return summary;
-
-  // Fall back to description
+  // Fall back to description, truncated to 60 words
   if (desc.length > 0) {
     const words = desc.split(' ');
     return words.length > 60 ? words.slice(0, 60).join(' ') + '...' : desc;
