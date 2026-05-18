@@ -50,7 +50,7 @@ function getSummary(article: Article): string {
   const desc    = article.description?.trim() ?? '';
 
   const summaryWords = summary.split(' ').filter(Boolean);
-  const isTooShort   = summaryWords.length < 20;
+  const isTooShort   = summaryWords.length < 50;                   // enforce ~50 word minimum
   const isHeadline   = wordOverlap(summary, article.title) > 0.55; // >55% overlap = headline rewrite
 
   if (!isTooShort && !isHeadline) return summary;

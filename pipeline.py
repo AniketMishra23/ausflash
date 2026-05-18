@@ -420,12 +420,15 @@ def _word_overlap(sentence, title):
         return 0.0
     return len(s_words & t_words) / len(s_words)
 
-def _truncate(text):
-    """Sentence-aware truncation at 60 words."""
+MIN_SUMMARY_WORDS = 50   # target minimum — pad with more sentences if below this
+MAX_SUMMARY_WORDS = 65   # hard cap before truncation kicks in
+
+def _truncate(text, max_words=MAX_SUMMARY_WORDS):
+    """Sentence-aware truncation at max_words."""
     words = text.split()
-    if len(words) <= 60:
+    if len(words) <= max_words:
         return text
-    chunk = ' '.join(words[:60])
+    chunk = ' '.join(words[:max_words])
     for punct in ('. ', '! ', '? '):
         idx = chunk.rfind(punct)
         if idx > 20:        # ignore very short fragments before the punctuation
@@ -433,6 +436,7 @@ def _truncate(text):
     return chunk + '...'    # no sentence boundary found — hard truncate
 
 def summarise(title, description):
+    import re
     text = (description or '').strip()
     if not text or len(text) < 30:
         return text or 'Summary not available.'
@@ -443,20 +447,39 @@ def summarise(title, description):
             # Pass description only — NOT the title.
             # Including the title biased Luhn toward title-echoing sentences.
             parser = PlaintextParser.from_string(text, Tokenizer('english'))
-            # Request 3 candidates so we have spares after filtering
-            candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=3)]
+            # Request 5 candidates so we have spares after filtering
+            candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=5)]
 
             # Drop any sentence that's mostly a restatement of the headline
             kept = [s for s in candidates if _word_overlap(s, title) < 0.55]
 
-            # Use up to 2 kept sentences; fall back to truncation if all were filtered
-            result = ' '.join(kept[:2]).strip()
+            result = ' '.join(kept[:3]).strip()  # start with up to 3 sentences
+
+            # ── Pad to minimum word count ─────────────────
+            # If sumy sentences are short, pull in more sentences from the
+            # original text until we reach MIN_SUMMARY_WORDS.
+            if result and len(result.split()) < MIN_SUMMARY_WORDS:
+                all_sentences = re.split(r'(?<=[.!?])\s+', text)
+                for sent in all_sentences:
+                    sent = sent.strip()
+                    if not sent or sent in result:
+                        continue
+                    if _word_overlap(sent, title) >= 0.55:
+                        continue
+                    padded = (result + ' ' + sent).strip()
+                    if len(padded.split()) > MAX_SUMMARY_WORDS:
+                        break   # adding this would exceed the cap
+                    result = padded
+                    if len(result.split()) >= MIN_SUMMARY_WORDS:
+                        break
+
             if result:
                 return _truncate(result)
         except Exception:
             pass  # fall through to the word-count fallback
 
     # ── Fallback: sentence-aware word-count truncation ────
+    # _truncate at MAX_SUMMARY_WORDS guarantees ~50-65 words from description
     return _truncate(text)
 
 
