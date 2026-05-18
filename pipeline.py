@@ -420,7 +420,7 @@ def _word_overlap(sentence, title):
         return 0.0
     return len(s_words & t_words) / len(s_words)
 
-BULLET_MAX_WORDS = 22   # max words per bullet — keeps each point tight
+BULLET_MAX_WORDS = 25   # max words per bullet — 3 × 25 = ~75 word ceiling
 
 def _trim_bullet(sentence, max_words=BULLET_MAX_WORDS):
     """Hard-truncate a single bullet at max_words."""

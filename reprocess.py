@@ -36,7 +36,7 @@ except ImportError:
     _sumy_ready = False
     print('sumy not found — run: pip install sumy nltk')
 
-BULLET_MAX_WORDS = 22
+BULLET_MAX_WORDS = 25
 
 def _trim_bullet(sentence, max_words=BULLET_MAX_WORDS):
     words = sentence.split()
