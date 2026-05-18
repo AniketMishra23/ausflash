@@ -503,26 +503,32 @@ def main():
     seen_urls = {row['url'] for row in existing.data}
     print(f'Existing articles in DB: {len(seen_urls)}')
 
-    # ── Apify scrape ──────────────────────────────────────
+    # ── Apify scrape (optional — skipped if credits are exhausted) ──
     # The actor fetches top-news articles from the sources listed in SOURCES.
     # 'countries': ['Australia'] biases results toward Australian-relevant stories.
-    print('\nCalling Apify Actor...')
-    client = ApifyClient(APIFY_API_TOKEN)
-    run    = client.actor(ACTOR_ID).call(run_input={
-        'category':           'Top news',
-        'countries':          ['Australia'],  # geographic bias
-        'sources':            SOURCES,
-        'maxArticles':        MAX_ARTICLES,
-        'keywordFilter':      '',             # no keyword restriction — keep everything
-        'proxyConfiguration': {'useApifyProxy': True},
-    })
-    # iterate_items() streams results without loading the full dataset into memory
-    items = list(client.dataset(run['defaultDatasetId']).iterate_items())
-    print(f'Apify returned {len(items)} raw articles.')
-
-    # ── Content filter ────────────────────────────────────
+    # Wrapped in try/except so the pipeline continues with RSS-only on failure.
     rows = []
     scrape_time = datetime.now().strftime('%H:%M:%S')
+    items = []
+    print('\nCalling Apify Actor...')
+    try:
+        client = ApifyClient(APIFY_API_TOKEN)
+        run    = client.actor(ACTOR_ID).call(run_input={
+            'category':           'Top news',
+            'countries':          ['Australia'],  # geographic bias
+            'sources':            SOURCES,
+            'maxArticles':        MAX_ARTICLES,
+            'keywordFilter':      '',             # no keyword restriction — keep everything
+            'proxyConfiguration': {'useApifyProxy': True},
+        })
+        # iterate_items() streams results without loading the full dataset into memory
+        items = list(client.dataset(run['defaultDatasetId']).iterate_items())
+        print(f'Apify returned {len(items)} raw articles.')
+    except Exception as e:
+        print(f'Apify skipped — {e}')
+        print('Continuing with Australian RSS feeds only.')
+
+    # ── Content filter ────────────────────────────────────
     for item in items:
         url = item.get('url', '')
         if not url or url in seen_urls: continue
