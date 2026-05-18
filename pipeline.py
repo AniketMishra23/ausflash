@@ -420,49 +420,67 @@ def _word_overlap(sentence, title):
         return 0.0
     return len(s_words & t_words) / len(s_words)
 
-MIN_SUMMARY_WORDS = 50   # target minimum — pad with more sentences if below this
-MAX_SUMMARY_WORDS = 65   # hard cap before truncation kicks in
+BULLET_MAX_WORDS = 22   # max words per bullet — keeps each point tight
 
-def _truncate(text, max_words=MAX_SUMMARY_WORDS):
-    """Sentence-aware truncation at max_words."""
-    words = text.split()
+def _trim_bullet(sentence, max_words=BULLET_MAX_WORDS):
+    """Hard-truncate a single bullet at max_words."""
+    words = sentence.split()
     if len(words) <= max_words:
-        return text
-    chunk = ' '.join(words[:max_words])
-    for punct in ('. ', '! ', '? '):
-        idx = chunk.rfind(punct)
-        if idx > 20:        # ignore very short fragments before the punctuation
-            return chunk[:idx + 1]
-    return chunk + '...'    # no sentence boundary found — hard truncate
+        return sentence.rstrip('.')
+    return ' '.join(words[:max_words]) + '...'
 
 def summarise(title, description):
     import re
     text = (description or '').strip()
     if not text:
-        return (title or 'Summary not available.')
+        return f'• {title}' if title else 'Summary not available.'
 
-    # ── Step 1: try sumy on description only ──────────────
-    # If sumy produces ≥ MIN_SUMMARY_WORDS of non-headline content, use it.
-    if _sumy_ready:
-        try:
-            parser     = PlaintextParser.from_string(text, Tokenizer('english'))
-            candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=5)]
-            kept       = [s for s in candidates if _word_overlap(s, title) < 0.55]
-            result     = ' '.join(kept[:3]).strip()
+    # Split description into individual sentences (min 10 chars to filter noise)
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text)
+                 if len(s.strip()) > 10]
 
-            if result and len(result.split()) >= MIN_SUMMARY_WORDS:
-                return _truncate(result)  # sumy gave enough — use it
-        except Exception:
-            pass
+    # ── 3-bullet format: Lead | Detail | Conclusion ───────
+    #
+    # Lead       = first sentence — always the most important (journalism rule)
+    # Detail     = best middle sentence picked by sumy (or first middle sentence)
+    # Conclusion = last sentence — outcome, reaction, or "what's next"
+    #
+    # If the description has fewer than 3 sentences, we fill missing slots
+    # using the title (for lead) so every article has a meaningful entry.
 
-    # ── Step 2: mix title + description ───────────────────
-    # Description alone was too short or sumy failed.
-    # Prepend the title so the summary always has full context:
-    #   "Title sentence. Description detail..." → truncated to ~60 words.
-    # This guarantees a meaningful, information-dense summary even for
-    # articles whose RSS descriptions are only 1-2 short sentences.
-    combined = f'{title}. {text}'
-    return _truncate(combined)
+    lead       = sentences[0] if sentences else title
+    conclusion = sentences[-1] if len(sentences) > 1 else ''
+    detail     = ''
+
+    middle = sentences[1:-1] if len(sentences) > 2 else []
+    if middle:
+        if _sumy_ready and len(middle) > 1:
+            try:
+                parser     = PlaintextParser.from_string(' '.join(middle), Tokenizer('english'))
+                candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=2)]
+                kept       = [s for s in candidates if _word_overlap(s, title) < 0.6]
+                if kept:
+                    detail = kept[0]
+            except Exception:
+                pass
+        if not detail:
+            detail = middle[0]  # fallback: first middle sentence
+
+    # If still no detail (only 2 sentences), use the title as the lead bullet
+    # and promote sentence[0] to detail so we have two distinct bullets
+    if not detail and lead != title:
+        detail = lead
+        lead   = title
+
+    # Deduplicate — drop any bullet that's identical to a previous one
+    seen, parts = set(), []
+    for sent in [lead, detail, conclusion]:
+        if sent and sent not in seen:
+            seen.add(sent)
+            parts.append(sent)
+
+    # Format as bullet list — each line trimmed to BULLET_MAX_WORDS
+    return '\n'.join(f'• {_trim_bullet(p)}' for p in parts[:3])
 
 
 # ═══════════════════════════════════════════════════════

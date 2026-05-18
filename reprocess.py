@@ -36,49 +36,52 @@ except ImportError:
     _sumy_ready = False
     print('sumy not found — run: pip install sumy nltk')
 
-MIN_SUMMARY_WORDS = 50
-MAX_SUMMARY_WORDS = 65
+BULLET_MAX_WORDS = 22
 
-def _word_overlap(sentence, title):
-    """Fraction of sentence words that also appear in the title."""
-    s_words = set(sentence.lower().split())
-    t_words = set(title.lower().split())
-    if not s_words:
-        return 0.0
-    return len(s_words & t_words) / len(s_words)
-
-def _truncate(text, max_words=MAX_SUMMARY_WORDS):
-    """Sentence-aware truncation at max_words."""
-    words = text.split()
+def _trim_bullet(sentence, max_words=BULLET_MAX_WORDS):
+    words = sentence.split()
     if len(words) <= max_words:
-        return text
-    chunk = ' '.join(words[:max_words])
-    for punct in ('. ', '! ', '? '):
-        idx = chunk.rfind(punct)
-        if idx > 20:
-            return chunk[:idx + 1]
-    return chunk + '...'
+        return sentence.rstrip('.')
+    return ' '.join(words[:max_words]) + '...'
 
 def summarise(title, description):
+    import re
     text = (description or '').strip()
     if not text:
-        return (title or 'Summary not available.')
+        return f'• {title}' if title else 'Summary not available.'
 
-    # Step 1: try sumy on description only
-    if _sumy_ready:
-        try:
-            parser     = PlaintextParser.from_string(text, Tokenizer('english'))
-            candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=5)]
-            kept       = [s for s in candidates if _word_overlap(s, title) < 0.55]
-            result     = ' '.join(kept[:3]).strip()
-            if result and len(result.split()) >= MIN_SUMMARY_WORDS:
-                return _truncate(result)
-        except Exception:
-            pass
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text)
+                 if len(s.strip()) > 10]
 
-    # Step 2: mix title + description — guarantees ~60 words of context
-    combined = f'{title}. {text}'
-    return _truncate(combined)
+    lead       = sentences[0] if sentences else title
+    conclusion = sentences[-1] if len(sentences) > 1 else ''
+    detail     = ''
+
+    middle = sentences[1:-1] if len(sentences) > 2 else []
+    if middle:
+        if _sumy_ready and len(middle) > 1:
+            try:
+                parser     = PlaintextParser.from_string(' '.join(middle), Tokenizer('english'))
+                candidates = [str(s) for s in LuhnSummarizer()(parser.document, sentences_count=2)]
+                kept       = [s for s in candidates if _word_overlap(s, title) < 0.6]
+                if kept:
+                    detail = kept[0]
+            except Exception:
+                pass
+        if not detail:
+            detail = middle[0]
+
+    if not detail and lead != title:
+        detail = lead
+        lead   = title
+
+    seen, parts = set(), []
+    for sent in [lead, detail, conclusion]:
+        if sent and sent not in seen:
+            seen.add(sent)
+            parts.append(sent)
+
+    return '\n'.join(f'• {_trim_bullet(p)}' for p in parts[:3])
 
 # ── Main ──────────────────────────────────────────────────
 def main():

@@ -29,24 +29,27 @@ function timeAgo(publishedAt: string): string {
   }
 }
 
-// Picks the best available summary text.
-// The pipeline now guarantees ≥50 words by mixing title + description when
-// the description alone is too short, so we just check word count here.
-// Falls back to raw description if ai_summary is missing or too short
-// (e.g. old articles stored before the 50-word rule was added).
-function getSummary(article: Article): string {
+// Returns bullet lines if the summary is in bullet format ("• ..."),
+// otherwise returns a single string for plain-text fallback.
+function getSummaryLines(article: Article): string[] {
   const summary = article.ai_summary?.trim() ?? '';
   const desc    = article.description?.trim() ?? '';
 
-  // Use ai_summary if it meets the minimum length
-  if (summary.split(' ').filter(Boolean).length >= 50) return summary;
+  // New bullet format from pipeline — split into individual lines
+  if (summary.startsWith('•')) {
+    return summary.split('\n').filter(l => l.trim().length > 0);
+  }
 
-  // Fall back to description, truncated to 60 words
+  // Old plain-text summary — wrap as single item so rendering is uniform
+  if (summary.length > 0) return [summary];
+
+  // No summary at all — fall back to raw description (truncated)
   if (desc.length > 0) {
     const words = desc.split(' ');
-    return words.length > 60 ? words.slice(0, 60).join(' ') + '...' : desc;
+    const text  = words.length > 60 ? words.slice(0, 60).join(' ') + '...' : desc;
+    return [text];
   }
-  return summary || 'Summary not available.';
+  return ['Summary not available.'];
 }
 
 // Opens the article URL in the device's default browser.
@@ -67,8 +70,9 @@ interface Props {
 }
 
 export default function NewsCard({ article, index, cardHeight }: Props) {
-  const color   = SECTION_COLORS[article.section] ?? '#1D9E75'; // fallback: brand green
-  const summary = getSummary(article);
+  const color        = SECTION_COLORS[article.section] ?? '#1D9E75'; // fallback: brand green
+  const summaryLines = getSummaryLines(article);
+  const isBullet     = summaryLines.length > 1 || summaryLines[0]?.startsWith('•');
 
   return (
     <View style={[styles.card, { height: cardHeight }]}>
@@ -90,8 +94,16 @@ export default function NewsCard({ article, index, cardHeight }: Props) {
       {/* ── Accent divider (colour matches section) ── */}
       <View style={[styles.divider, { backgroundColor: color }]} />
 
-      {/* ── Summary / description ── */}
-      <Text style={styles.summary}>{summary}</Text>
+      {/* ── Summary — bullet list or plain text ── */}
+      {isBullet ? (
+        <View style={styles.bulletList}>
+          {summaryLines.map((line, i) => (
+            <Text key={i} style={styles.bulletLine}>{line}</Text>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.summary}>{summaryLines[0]}</Text>
+      )}
 
       {/* ── Read full article button ── */}
       <TouchableOpacity
@@ -165,6 +177,15 @@ const styles = StyleSheet.create({
     color: '#444',
     lineHeight: 26,
     marginBottom: 28,
+  },
+  bulletList: {
+    marginBottom: 28,
+    gap: 10,            // space between bullets
+  },
+  bulletLine: {
+    fontSize: 15,
+    color: '#444',
+    lineHeight: 23,
   },
   readMore: {
     alignSelf: 'flex-start',
