@@ -17,8 +17,8 @@ import os
 import re
 from supabase import create_client
 
-SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
+SUPABASE_URL = "https://numxnyibpcayiikuotzf.supabase.co"
+SUPABASE_KEY = "sb_publishable_47AlYmJdgJQaGPBJbGL-3Q_9sd7Qcli"
 
 # ── Summarisation (kept in sync with pipeline.py) ─────────
 
@@ -53,11 +53,14 @@ def summarise(title, description):
 
     if _hf_ready:
         try:
-            combined = f'{title}. {text}'
+            combined  = f'{title}. {text}'
+            input_len = len(combined.split())
+            max_len   = min(90, max(30, input_len // 2))
+            min_len   = min(55, max(15, max_len - 10))
             result   = _summarizer(
                 combined,
-                max_length=90,
-                min_length=55,
+                max_length=max_len,
+                min_length=min_len,
                 do_sample=False,
                 truncation=True,
             )

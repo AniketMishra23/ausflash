@@ -430,11 +430,16 @@ def summarise(title, description):
     # ── Abstractive path (BART) ────────────────────────────
     if _hf_ready:
         try:
-            combined = f'{title}. {text}'
+            combined  = f'{title}. {text}'
+            # Scale max/min length to input size to suppress HuggingFace warnings
+            # when the input is shorter than the requested max_length.
+            input_len = len(combined.split())
+            max_len   = min(90, max(30, input_len // 2))
+            min_len   = min(55, max(15, max_len - 10))
             result   = _summarizer(
                 combined,
-                max_length=90,
-                min_length=55,
+                max_length=max_len,
+                min_length=min_len,
                 do_sample=False,
                 truncation=True,
             )
