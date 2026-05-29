@@ -46,6 +46,16 @@ def _truncate(text, max_words=65):
             return chunk[:idx + 1]
     return chunk + '...'
 
+def _word_overlap(sentence, title):
+    s_words = set(sentence.lower().split())
+    t_words = set(title.lower().split())
+    if not s_words:
+        return 0.0
+    return len(s_words & t_words) / len(s_words)
+
+def _clean(s):
+    return s.strip().rstrip(' .')
+
 def summarise(title, description):
     text = (description or '').strip()
     if not text:
@@ -56,8 +66,8 @@ def summarise(title, description):
             combined  = f'{title}. {text}'
             input_len = len(combined.split())
             max_len   = min(90, max(30, input_len // 2))
-            min_len   = min(55, max(15, max_len - 10))
-            result   = _summarizer(
+            min_len   = min(55, max(30, max_len - 10))
+            result    = _summarizer(
                 combined,
                 max_length=max_len,
                 min_length=min_len,
@@ -66,12 +76,19 @@ def summarise(title, description):
             )
             summary = result[0]['summary_text'].strip()
             if summary:
-                parts = [s.strip() for s in re.split(r'(?<=[.!?])\s+', summary)
+                parts = [_clean(s) for s in re.split(r'(?<=[.!?])\s+', summary)
                          if len(s.strip()) > 5]
                 if parts:
                     lead = parts[0]
-                    body = ' '.join(parts[1:]) if len(parts) > 1 else ''
-                    return f'{lead}\n{body}' if body else f'{title}\n{summary}'
+                    rest = parts[1:]
+                    if _word_overlap(lead, title) > 0.55:
+                        if rest:
+                            lead = rest[0]
+                            rest = rest[1:]
+                        else:
+                            return f'{title}\n{_clean(summary)}'
+                    body = ' '.join(rest)
+                    return f'{lead}\n{body}' if body else f'{title}\n{lead}'
         except Exception as _e:
             print(f'  BART error: {_e} — falling back')
 
@@ -79,11 +96,20 @@ def summarise(title, description):
                  if len(s.strip()) > 10]
     if not sentences:
         return f'{title}\n{_truncate(text, max_words=40)}'
-    lead = sentences[0]
-    rest = sentences[1:]
+
+    lead, rest = None, []
+    for i, s in enumerate(sentences):
+        if _word_overlap(s, title) <= 0.55:
+            lead = s
+            rest = sentences[i + 1:]
+            break
+    if lead is None:
+        lead = title
+        rest = sentences
+
     if rest:
         return f'{lead}\n{_truncate(" ".join(rest), max_words=40)}'
-    return f'{title}\n{_truncate(sentences[0], max_words=40)}'
+    return f'{title}\n{_truncate(lead, max_words=40)}'
 
 # ── Main ──────────────────────────────────────────────────
 def main():
